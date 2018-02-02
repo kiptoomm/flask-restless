@@ -654,13 +654,13 @@ class API(APIBase):
         """
         # try to load the fields/values to update from the body of the request
         try:
-            data = json.loads(request.get_data()) or {}
+            document = json.loads(request.get_data()) or {}
         except (BadRequest, TypeError, ValueError, OverflowError) as exception:
             # this also happens when request.data is empty
             detail = 'Unable to decode data'
             return error_response(400, cause=exception, detail=detail)
         for preprocessor in self.preprocessors['PATCH_RESOURCE']:
-            temp_result = preprocessor(resource_id=resource_id, data=data)
+            temp_result = preprocessor(resource_id=resource_id, data=document)
             # See the note under the preprocessor in the get() method.
             if temp_result is not None:
                 resource_id = temp_result
@@ -681,8 +681,27 @@ class API(APIBase):
             detail = 'No resource found with type {0} and ID {1}'
             detail = detail.format(collection_name(self.model), resource_id)
             return error_response(404, detail=detail)
-        # Unwrap the data from the collection name key.
-        data = data.pop('data', {})
+        # deserialize the partial document to extract values that
+        # have non-string/unicode representations of model fields, e.g enums
+        # this is necessary because :meth:`_update_instance` sets instance
+        # attributes to literal values parsed from data.items(), yet that
+        # method does not commit the changes to the database before possibly
+        # calling the model's serializer. serializing fields that have
+        # non-literal values would otherwise fail
+        try:
+            raise Exception(self.deserializer.__dict__)
+            deserialized_instance = self.deserializer.deserialize(document)
+            # Unwrap the data from the collection name key.
+            data = document.pop('data', {})
+            # replace attributes with ones from the deserialized instance
+            if data:
+                attributes_ = data.get('attributes', {})
+                for field in attributes_.keys():
+                    value = vars(deserialized_instance)[field]
+                    attributes_[field] = value
+        except self.validation_exceptions as exception:
+            return self._handle_validation_exception(exception)
+
         if 'type' not in data:
             detail = 'Missing "type" element'
             return error_response(400, detail=detail)
