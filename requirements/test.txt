@@ -1,2 +1,4 @@
 -r install.txt
+enum34
+marshmallow_enum
 unittest2
